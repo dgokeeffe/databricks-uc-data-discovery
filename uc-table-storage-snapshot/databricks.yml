@@ -1,0 +1,21 @@
+bundle:
+  name: uc-table-storage-snapshot
+
+variables:
+  target_table:
+    description: Three-level name of the snapshot table to write results to
+    default: main.observability.table_storage_snapshot
+  catalog_filter:
+    description: >
+      Comma-separated list of catalogs to scan. Leave empty to scan all visible catalogs.
+    default: ""
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production

@@ -1,0 +1,17 @@
+resources:
+  jobs:
+    table_storage_snapshot:
+      name: "[${bundle.target}] UC Table Storage Snapshot"
+      tasks:
+        - task_key: snapshot_tables
+          notebook_task:
+            notebook_path: ../src/snapshot_tables.py
+            source: WORKSPACE
+            base_parameters:
+              target_table: ${var.target_table}
+              catalog_filter: ${var.catalog_filter}
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"
