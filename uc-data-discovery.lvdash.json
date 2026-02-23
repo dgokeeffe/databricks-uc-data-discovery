@@ -165,6 +165,78 @@
       "displayName": "catalog_summary_counters",
       "query": "SELECT\n  COUNT(DISTINCT COALESCE(source_table_catalog, target_table_catalog)) AS total_catalogs,\n  COUNT(DISTINCT CONCAT(\n    COALESCE(source_table_catalog, target_table_catalog), '.',\n    COALESCE(source_table_schema, target_table_schema)\n  )) AS total_schemas,\n  COUNT(DISTINCT COALESCE(source_table_full_name, target_table_full_name)) AS total_tables,\n  COUNT(DISTINCT created_by) AS total_users,\n  COUNT(DISTINCT workspace_id) AS total_workspaces\nFROM system.access.table_lineage\nWHERE event_date >= CURRENT_DATE() - INTERVAL 90 DAY",
       "parameters": []
+    },
+    {
+      "name": "ds_doc_coverage",
+      "displayName": "documentation_coverage",
+      "query": "WITH table_docs AS (\n  SELECT\n    table_catalog AS catalog,\n    table_schema AS schema_name,\n    table_name,\n    CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 ELSE 0 END AS has_comment,\n    table_owner,\n    table_type,\n    data_source_format,\n    created,\n    last_altered\n  FROM system.information_schema.tables\n  WHERE table_schema != 'information_schema'\n),\ncolumn_docs AS (\n  SELECT\n    table_catalog AS catalog,\n    table_schema AS schema_name,\n    table_name,\n    COUNT(*) AS total_columns,\n    COUNT(CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 END) AS documented_columns\n  FROM system.information_schema.columns\n  WHERE table_schema != 'information_schema'\n  GROUP BY ALL\n)\nSELECT\n  t.catalog,\n  t.schema_name,\n  t.table_name,\n  t.table_owner,\n  t.table_type,\n  t.data_source_format,\n  t.has_comment AS table_documented,\n  COALESCE(c.total_columns, 0) AS total_columns,\n  COALESCE(c.documented_columns, 0) AS documented_columns,\n  CASE\n    WHEN COALESCE(c.total_columns, 0) = 0 THEN 0\n    ELSE ROUND(100.0 * c.documented_columns / c.total_columns, 1)\n  END AS column_doc_pct,\n  t.created AS created_date,\n  t.last_altered\nFROM table_docs t\nLEFT JOIN column_docs c\n  ON t.catalog = c.catalog\n  AND t.schema_name = c.schema_name\n  AND t.table_name = c.table_name\nORDER BY column_doc_pct ASC",
+      "parameters": []
+    },
+    {
+      "name": "ds_doc_summary",
+      "displayName": "documentation_summary",
+      "query": "SELECT\n  COUNT(*) AS total_tables,\n  COUNT(CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 END) AS documented_tables,\n  ROUND(100.0 * COUNT(CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 END) / COUNT(*), 1) AS table_doc_pct\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'",
+      "parameters": []
+    },
+    {
+      "name": "ds_col_doc_summary",
+      "displayName": "column_documentation_summary",
+      "query": "SELECT\n  COUNT(*) AS total_columns,\n  COUNT(CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 END) AS documented_columns,\n  ROUND(100.0 * COUNT(CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 END) / COUNT(*), 1) AS column_doc_pct\nFROM system.information_schema.columns\nWHERE table_schema != 'information_schema'",
+      "parameters": []
+    },
+    {
+      "name": "ds_tag_coverage",
+      "displayName": "tag_coverage",
+      "query": "WITH all_tables AS (\n  SELECT\n    table_catalog AS catalog,\n    table_schema AS schema_name,\n    table_name\n  FROM system.information_schema.tables\n  WHERE table_schema != 'information_schema'\n),\ntagged AS (\n  SELECT DISTINCT\n    catalog_name AS catalog,\n    schema_name,\n    table_name\n  FROM system.information_schema.table_tags\n)\nSELECT\n  a.catalog,\n  COUNT(DISTINCT a.table_name) AS total_tables,\n  COUNT(DISTINCT t.table_name) AS tagged_tables,\n  COUNT(DISTINCT a.table_name) - COUNT(DISTINCT t.table_name) AS untagged_tables,\n  ROUND(100.0 * COUNT(DISTINCT t.table_name) / COUNT(DISTINCT a.table_name), 1) AS tag_coverage_pct\nFROM all_tables a\nLEFT JOIN tagged t\n  ON a.catalog = t.catalog\n  AND a.schema_name = t.schema_name\n  AND a.table_name = t.table_name\nGROUP BY a.catalog\nORDER BY tag_coverage_pct ASC",
+      "parameters": []
+    },
+    {
+      "name": "ds_table_growth",
+      "displayName": "table_growth_over_time",
+      "query": "SELECT\n  DATE_TRUNC('MONTH', created) AS month,\n  table_catalog AS catalog,\n  COUNT(*) AS tables_created\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'\n  AND created IS NOT NULL\nGROUP BY ALL\nORDER BY month DESC",
+      "parameters": []
+    },
+    {
+      "name": "ds_table_types",
+      "displayName": "table_type_distribution",
+      "query": "SELECT\n  table_type,\n  data_source_format,\n  COUNT(*) AS table_count\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'\nGROUP BY ALL\nORDER BY table_count DESC",
+      "parameters": []
+    },
+    {
+      "name": "ds_top_owners",
+      "displayName": "top_table_owners",
+      "query": "SELECT\n  table_owner,\n  COUNT(*) AS tables_owned,\n  COUNT(DISTINCT table_catalog) AS across_catalogs,\n  COUNT(CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 END) AS documented,\n  ROUND(100.0 * COUNT(CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 END) / COUNT(*), 1) AS doc_pct\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'\n  AND table_owner IS NOT NULL\nGROUP BY table_owner\nORDER BY tables_owned DESC\nLIMIT 50",
+      "parameters": []
+    },
+    {
+      "name": "ds_audit_uc_events",
+      "displayName": "uc_governance_events",
+      "query": "SELECT\n  DATE_TRUNC('DAY', event_time) AS event_day,\n  action_name,\n  COUNT(*) AS event_count\nFROM system.access.audit\nWHERE service_name = 'unityCatalog'\n  AND action_name IN (\n    'createTable', 'deleteTable',\n    'createSchema', 'deleteSchema',\n    'createCatalog', 'deleteCatalog',\n    'updatePermissions', 'getPermissions',\n    'createVolume', 'deleteVolume'\n  )\n  AND event_date >= CURRENT_DATE() - INTERVAL 90 DAY\nGROUP BY ALL\nORDER BY event_day DESC",
+      "parameters": []
+    },
+    {
+      "name": "ds_permission_changes",
+      "displayName": "permission_changes",
+      "query": "SELECT\n  DATE_TRUNC('DAY', event_time) AS event_day,\n  w.workspace_name,\n  user_identity.email AS changed_by,\n  request_params.securable_type,\n  request_params.securable_full_name,\n  request_params.changes,\n  COUNT(*) AS change_count\nFROM system.access.audit a\nLEFT JOIN system.access.workspaces_latest w ON a.workspace_id = w.workspace_id\nWHERE a.service_name = 'unityCatalog'\n  AND a.action_name = 'updatePermissions'\n  AND a.event_date >= CURRENT_DATE() - INTERVAL 30 DAY\nGROUP BY ALL\nORDER BY event_day DESC",
+      "parameters": []
+    },
+    {
+      "name": "ds_denied_access",
+      "displayName": "denied_access_attempts",
+      "query": "SELECT\n  user_identity.email AS user_email,\n  request_params.securable_type,\n  request_params.securable_full_name,\n  COUNT(*) AS denied_count,\n  MAX(event_date) AS last_denied\nFROM system.access.audit\nWHERE service_name = 'unityCatalog'\n  AND response.status_code != 200\n  AND action_name IN ('getTable', 'getSchema', 'getCatalog', 'generateTemporaryTableCredential')\n  AND event_date >= CURRENT_DATE() - INTERVAL 30 DAY\n  AND user_identity.email IS NOT NULL\nGROUP BY ALL\nHAVING denied_count >= 3\nORDER BY denied_count DESC\nLIMIT 50",
+      "parameters": []
+    },
+    {
+      "name": "ds_audit_summary",
+      "displayName": "audit_event_summary",
+      "query": "SELECT\n  COUNT(*) AS total_uc_events,\n  COUNT(DISTINCT user_identity.email) AS unique_users,\n  COUNT(CASE WHEN action_name = 'updatePermissions' THEN 1 END) AS permission_changes,\n  COUNT(CASE WHEN action_name IN ('createTable', 'createSchema', 'createCatalog') THEN 1 END) AS objects_created,\n  COUNT(CASE WHEN action_name IN ('deleteTable', 'deleteSchema', 'deleteCatalog') THEN 1 END) AS objects_deleted,\n  COUNT(CASE WHEN response.status_code != 200 THEN 1 END) AS failed_requests\nFROM system.access.audit\nWHERE service_name = 'unityCatalog'\n  AND event_date >= CURRENT_DATE() - INTERVAL 30 DAY",
+      "parameters": []
+    },
+    {
+      "name": "ds_most_active_audit",
+      "displayName": "most_active_governance_users",
+      "query": "SELECT\n  user_identity.email AS user_email,\n  COUNT(*) AS total_events,\n  COUNT(CASE WHEN action_name = 'updatePermissions' THEN 1 END) AS permission_changes,\n  COUNT(CASE WHEN action_name LIKE 'create%' THEN 1 END) AS create_events,\n  COUNT(CASE WHEN action_name LIKE 'delete%' THEN 1 END) AS delete_events,\n  COUNT(CASE WHEN response.status_code != 200 THEN 1 END) AS failed_requests\nFROM system.access.audit\nWHERE service_name = 'unityCatalog'\n  AND event_date >= CURRENT_DATE() - INTERVAL 30 DAY\n  AND user_identity.email IS NOT NULL\nGROUP BY user_identity.email\nORDER BY total_events DESC\nLIMIT 50",
+      "parameters": []
     }
   ],
   "pages": [
@@ -4429,6 +4501,1253 @@
             "y": 12,
             "width": 6,
             "height": 10
+          }
+        }
+      ]
+    },
+    {
+      "name": "pg_governance",
+      "displayName": "Governance & Documentation",
+      "layout": [
+        {
+          "widget": {
+            "name": "w_gov_title",
+            "textbox_spec": "# Governance & documentation\nDocumentation coverage, tag adoption, table ownership, and growth trends from `system.information_schema`. Note: information_schema is privilege-filtered - you see only objects you have access to.",
+            "spec": {
+              "version": 1,
+              "widgetType": "textbox"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_doc_tbl_pct",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_doc_summary",
+                  "fields": [
+                    {
+                      "name": "table_doc_pct",
+                      "expression": "`table_doc_pct`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "table_doc_pct",
+                  "displayName": "% Tables Documented"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Table Documentation %"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_doc_col_pct",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_col_doc_summary",
+                  "fields": [
+                    {
+                      "name": "column_doc_pct",
+                      "expression": "`column_doc_pct`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "column_doc_pct",
+                  "displayName": "% Columns Documented"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Column Documentation %"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_doc_total",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_doc_summary",
+                  "fields": [
+                    {
+                      "name": "total_tables",
+                      "expression": "`total_tables`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_tables",
+                  "displayName": "Total Tables"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total Tables (visible)"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_tag_cov",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_tag_coverage",
+                  "fields": [
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "tagged_tables",
+                      "expression": "`tagged_tables`"
+                    },
+                    {
+                      "name": "untagged_tables",
+                      "expression": "`untagged_tables`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "catalog",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Catalog"
+                },
+                "y": {
+                  "fieldName": "tagged_tables",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Tagged Tables"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tag Coverage by Catalog"
+              },
+              "mark": {
+                "layout": "stack"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 3,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_tbl_types",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_table_types",
+                  "fields": [
+                    {
+                      "name": "data_source_format",
+                      "expression": "`data_source_format`"
+                    },
+                    {
+                      "name": "table_count",
+                      "expression": "`table_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "table_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Tables"
+                },
+                "color": {
+                  "fieldName": "data_source_format",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Format"
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Table Format Distribution"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 4,
+            "width": 3,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_tbl_growth",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_table_growth",
+                  "fields": [
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "tables_created",
+                      "expression": "`tables_created`"
+                    },
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Month"
+                },
+                "y": {
+                  "fieldName": "tables_created",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Tables Created"
+                },
+                "color": {
+                  "fieldName": "catalog",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Catalog"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Table Growth Over Time"
+              },
+              "mark": {
+                "layout": "stack"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_owners",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_top_owners",
+                  "fields": [
+                    {
+                      "name": "table_owner",
+                      "expression": "`table_owner`"
+                    },
+                    {
+                      "name": "tables_owned",
+                      "expression": "`tables_owned`"
+                    },
+                    {
+                      "name": "across_catalogs",
+                      "expression": "`across_catalogs`"
+                    },
+                    {
+                      "name": "documented",
+                      "expression": "`documented`"
+                    },
+                    {
+                      "name": "doc_pct",
+                      "expression": "`doc_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "table_owner",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Owner",
+                    "displayName": "table_owner",
+                    "allowSearch": true
+                  },
+                  {
+                    "fieldName": "tables_owned",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Tables Owned",
+                    "displayName": "tables_owned"
+                  },
+                  {
+                    "fieldName": "across_catalogs",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Catalogs",
+                    "displayName": "across_catalogs"
+                  },
+                  {
+                    "fieldName": "documented",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Documented",
+                    "displayName": "documented"
+                  },
+                  {
+                    "fieldName": "doc_pct",
+                    "type": "double",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Doc %",
+                    "displayName": "doc_pct"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Table Ownership & Documentation by Owner"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 3,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "w_doc_detail",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_doc_coverage",
+                  "fields": [
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    },
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "table_owner",
+                      "expression": "`table_owner`"
+                    },
+                    {
+                      "name": "table_documented",
+                      "expression": "`table_documented`"
+                    },
+                    {
+                      "name": "total_columns",
+                      "expression": "`total_columns`"
+                    },
+                    {
+                      "name": "documented_columns",
+                      "expression": "`documented_columns`"
+                    },
+                    {
+                      "name": "column_doc_pct",
+                      "expression": "`column_doc_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "catalog",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Catalog",
+                    "displayName": "catalog"
+                  },
+                  {
+                    "fieldName": "schema_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Schema",
+                    "displayName": "schema_name"
+                  },
+                  {
+                    "fieldName": "table_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Table",
+                    "displayName": "table_name",
+                    "allowSearch": true
+                  },
+                  {
+                    "fieldName": "table_owner",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Owner",
+                    "displayName": "table_owner"
+                  },
+                  {
+                    "fieldName": "table_documented",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Table Documented",
+                    "displayName": "table_documented"
+                  },
+                  {
+                    "fieldName": "total_columns",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 5,
+                    "title": "Columns",
+                    "displayName": "total_columns"
+                  },
+                  {
+                    "fieldName": "documented_columns",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 6,
+                    "title": "Documented Cols",
+                    "displayName": "documented_columns"
+                  },
+                  {
+                    "fieldName": "column_doc_pct",
+                    "type": "double",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 7,
+                    "title": "Col Doc %",
+                    "displayName": "column_doc_pct"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Documentation Coverage Detail (sorted worst-first)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 18,
+            "width": 3,
+            "height": 10
+          }
+        }
+      ]
+    },
+    {
+      "name": "pg_audit",
+      "displayName": "Audit & Access Logs",
+      "layout": [
+        {
+          "widget": {
+            "name": "w_audit_title",
+            "textbox_spec": "# Audit & access logs\nUnity Catalog governance events from `system.access.audit` - permission changes, object creation/deletion, denied access attempts, and user activity.",
+            "spec": {
+              "version": 1,
+              "widgetType": "textbox"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_audit_events",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_audit_summary",
+                  "fields": [
+                    {
+                      "name": "total_uc_events",
+                      "expression": "`total_uc_events`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_uc_events",
+                  "displayName": "UC Events"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total UC Events (30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_audit_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_audit_summary",
+                  "fields": [
+                    {
+                      "name": "unique_users",
+                      "expression": "`unique_users`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "unique_users",
+                  "displayName": "Users"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Unique Users"
+              }
+            }
+          },
+          "position": {
+            "x": 1,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_audit_perms",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_audit_summary",
+                  "fields": [
+                    {
+                      "name": "permission_changes",
+                      "expression": "`permission_changes`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "permission_changes",
+                  "displayName": "Permission Changes"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Permission Changes"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_audit_created",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_audit_summary",
+                  "fields": [
+                    {
+                      "name": "objects_created",
+                      "expression": "`objects_created`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "objects_created",
+                  "displayName": "Created"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Objects Created"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_audit_deleted",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_audit_summary",
+                  "fields": [
+                    {
+                      "name": "objects_deleted",
+                      "expression": "`objects_deleted`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "objects_deleted",
+                  "displayName": "Deleted"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Objects Deleted"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_audit_failed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_audit_summary",
+                  "fields": [
+                    {
+                      "name": "failed_requests",
+                      "expression": "`failed_requests`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "failed_requests",
+                  "displayName": "Failed"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Failed Requests"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_uc_events_time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_audit_uc_events",
+                  "fields": [
+                    {
+                      "name": "event_day",
+                      "expression": "`event_day`"
+                    },
+                    {
+                      "name": "action_name",
+                      "expression": "`action_name`"
+                    },
+                    {
+                      "name": "event_count",
+                      "expression": "`event_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Date"
+                },
+                "y": {
+                  "fieldName": "event_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Events"
+                },
+                "color": {
+                  "fieldName": "action_name",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Action"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "UC Governance Activity Over Time (90d)"
+              },
+              "mark": {
+                "layout": "stack"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_perm_changes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_permission_changes",
+                  "fields": [
+                    {
+                      "name": "event_day",
+                      "expression": "`event_day`"
+                    },
+                    {
+                      "name": "workspace_name",
+                      "expression": "`workspace_name`"
+                    },
+                    {
+                      "name": "changed_by",
+                      "expression": "`changed_by`"
+                    },
+                    {
+                      "name": "securable_type",
+                      "expression": "`securable_type`"
+                    },
+                    {
+                      "name": "securable_full_name",
+                      "expression": "`securable_full_name`"
+                    },
+                    {
+                      "name": "change_count",
+                      "expression": "`change_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "event_day",
+                    "type": "date",
+                    "displayAs": "datetime",
+                    "dateTimeFormat": "yyyy-MM-DD",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Date",
+                    "displayName": "event_day"
+                  },
+                  {
+                    "fieldName": "workspace_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Workspace",
+                    "displayName": "workspace_name"
+                  },
+                  {
+                    "fieldName": "changed_by",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Changed By",
+                    "displayName": "changed_by",
+                    "allowSearch": true
+                  },
+                  {
+                    "fieldName": "securable_type",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Object Type",
+                    "displayName": "securable_type"
+                  },
+                  {
+                    "fieldName": "securable_full_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Object Name",
+                    "displayName": "securable_full_name",
+                    "allowSearch": true
+                  },
+                  {
+                    "fieldName": "change_count",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 5,
+                    "title": "Changes",
+                    "displayName": "change_count"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Permission Changes (30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "w_denied",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_denied_access",
+                  "fields": [
+                    {
+                      "name": "user_email",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "name": "securable_type",
+                      "expression": "`securable_type`"
+                    },
+                    {
+                      "name": "securable_full_name",
+                      "expression": "`securable_full_name`"
+                    },
+                    {
+                      "name": "denied_count",
+                      "expression": "`denied_count`"
+                    },
+                    {
+                      "name": "last_denied",
+                      "expression": "`last_denied`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "user_email",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "User",
+                    "displayName": "user_email",
+                    "allowSearch": true
+                  },
+                  {
+                    "fieldName": "securable_type",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Object Type",
+                    "displayName": "securable_type"
+                  },
+                  {
+                    "fieldName": "securable_full_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Object",
+                    "displayName": "securable_full_name",
+                    "allowSearch": true
+                  },
+                  {
+                    "fieldName": "denied_count",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Denied Count",
+                    "displayName": "denied_count"
+                  },
+                  {
+                    "fieldName": "last_denied",
+                    "type": "date",
+                    "displayAs": "datetime",
+                    "dateTimeFormat": "yyyy-MM-DD",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Last Denied",
+                    "displayName": "last_denied"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Repeated Denied Access Attempts (3+ in 30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 3,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "w_active_gov",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_most_active_audit",
+                  "fields": [
+                    {
+                      "name": "user_email",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "name": "total_events",
+                      "expression": "`total_events`"
+                    },
+                    {
+                      "name": "permission_changes",
+                      "expression": "`permission_changes`"
+                    },
+                    {
+                      "name": "create_events",
+                      "expression": "`create_events`"
+                    },
+                    {
+                      "name": "delete_events",
+                      "expression": "`delete_events`"
+                    },
+                    {
+                      "name": "failed_requests",
+                      "expression": "`failed_requests`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "user_email",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "User",
+                    "displayName": "user_email",
+                    "allowSearch": true
+                  },
+                  {
+                    "fieldName": "total_events",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Total Events",
+                    "displayName": "total_events"
+                  },
+                  {
+                    "fieldName": "permission_changes",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Perm Changes",
+                    "displayName": "permission_changes"
+                  },
+                  {
+                    "fieldName": "create_events",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Creates",
+                    "displayName": "create_events"
+                  },
+                  {
+                    "fieldName": "delete_events",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Deletes",
+                    "displayName": "delete_events"
+                  },
+                  {
+                    "fieldName": "failed_requests",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 5,
+                    "title": "Failed",
+                    "displayName": "failed_requests"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Most Active Governance Users (30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 20,
+            "width": 3,
+            "height": 9
           }
         }
       ]

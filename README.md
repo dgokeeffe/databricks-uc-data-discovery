@@ -1,12 +1,14 @@
 # Unity Catalog data discovery dashboard
 
-An AI/BI (Lakeview) dashboard built on `system.access.table_lineage` to give you an **account-level** view of all data assets across your Databricks workspaces.
+An AI/BI (Lakeview) dashboard that combines `system.access.table_lineage`, `system.information_schema`, and `system.access.audit` to give you a comprehensive view of all data assets across your Databricks account.
 
-Unlike `information_schema` (which is scoped to a single workspace), `table_lineage` captures every read/write event across your entire account - making it the best source of truth for understanding what data exists and how it's used.
+**30 datasets, 6 pages, 62 widgets** - covering lineage, data health, governance, documentation coverage, and audit trails.
+
+## Why table_lineage as the foundation?
+
+Unlike `information_schema` (which is privilege-filtered and workspace-scoped), `table_lineage` captures every read/write event across your entire account - making it the best source of truth for understanding what data exists. This dashboard layers on `information_schema` for metadata enrichment and `audit` logs for governance visibility.
 
 ## Pages
-
-The dashboard is organized into 4 pages:
 
 ### 1. Catalog overview
 
@@ -44,6 +46,27 @@ Understand shared data assets and data mesh patterns:
 - Tables accessed from multiple workspaces
 - Cross-workspace table details with workspace names
 
+### 5. Governance and documentation
+
+Documentation and tag coverage from `information_schema`:
+
+- Table and column documentation percentages
+- Tag coverage by catalog (tagged vs untagged tables)
+- Table format distribution (Delta, Parquet, CSV, etc.)
+- Table growth over time by catalog
+- Table ownership with per-owner documentation rates
+- Full documentation coverage detail table (sorted worst-first)
+
+### 6. Audit and access logs
+
+Unity Catalog governance events from `system.access.audit`:
+
+- Summary counters: total events, unique users, permission changes, creates, deletes, failures
+- UC governance activity over time (createTable, deleteTable, updatePermissions, etc.)
+- Permission change log with who changed what and when
+- Repeated denied access attempts (users hitting access errors 3+ times)
+- Most active governance users ranked by event type
+
 ## System tables used
 
 | System table | Purpose |
@@ -51,22 +74,28 @@ Understand shared data assets and data mesh patterns:
 | `system.access.table_lineage` | Core data - all read/write events across the account |
 | `system.access.column_lineage` | Column-level lineage for deep dive analysis |
 | `system.access.workspaces_latest` | Workspace names and URLs (replaces manual workspace reference tables) |
+| `system.access.audit` | UC governance events - permission changes, object lifecycle, denied access |
 | `system.billing.usage` | Cost attribution for job-to-catalog mapping |
 | `system.lakeflow.jobs` | Job metadata for lineage enrichment |
-| `system.information_schema.tables` | Used to check if unused datasets still exist |
+| `system.information_schema.tables` | Table metadata - owner, type, format, comments, creation date |
+| `system.information_schema.columns` | Column metadata and documentation coverage |
+| `system.information_schema.table_tags` | Tag coverage analysis |
 
 ## Key features
 
 - **Account-level scope**: Sees all tables across all workspaces, not just the current one
 - **No manual setup**: Uses `system.access.workspaces_latest` instead of requiring a custom workspace reference table
-- **entity_metadata parsing**: Breaks down access by AI/BI dashboard, DLT pipeline, notebook, job, and SQL query using the `entity_metadata` struct
-- **Multi-page layout**: Organized into logical sections for different audiences
+- **entity_metadata parsing**: Breaks down access by AI/BI dashboard, DLT pipeline, notebook, job, and SQL query
+- **Documentation scoring**: Shows what % of tables and columns have comments, sorted worst-first for action
+- **Tag coverage**: Identifies catalogs with low tag adoption
+- **Audit trail**: Permission changes, denied access patterns, and governance user activity
+- **Data freshness tiers**: Categorizes tables as Fresh/Recent/Aging/Stale based on last write
 - **Cross-workspace analysis**: Identifies tables shared across workspace boundaries
 
 ## Prerequisites
 
 - Unity Catalog enabled on your account
-- System tables enabled (`system.access.table_lineage`, `system.access.workspaces_latest`)
+- System tables enabled (see [Enable system tables](https://docs.databricks.com/aws/en/admin/system-tables/#enable))
 - `SELECT` permission on the system tables listed above
 - A SQL warehouse to run the dashboard queries
 
@@ -83,6 +112,8 @@ Understand shared data assets and data mesh patterns:
 - The `job_to_catalog` dataset references two custom UDFs (`job_type_from_sku` and `team_name_from_tags`). You can either create these in your workspace or simplify that dataset by removing those columns.
 - Lineage data has a [retention period](https://docs.databricks.com/aws/en/admin/system-tables/lineage) - older events may not be available.
 - `system.access.workspaces_latest` is in Public Preview. It only includes currently active workspaces (cancelled workspaces are removed).
+- `information_schema` views are privilege-filtered - you only see objects you have UC permissions to access.
+- `system.access.audit` is in Public Preview.
 
 ## License
 
