@@ -237,6 +237,36 @@
       "displayName": "most_active_governance_users",
       "query": "SELECT\n  user_identity.email AS user_email,\n  COUNT(*) AS total_events,\n  COUNT(CASE WHEN action_name = 'updatePermissions' THEN 1 END) AS permission_changes,\n  COUNT(CASE WHEN action_name LIKE 'create%' THEN 1 END) AS create_events,\n  COUNT(CASE WHEN action_name LIKE 'delete%' THEN 1 END) AS delete_events,\n  COUNT(CASE WHEN response.status_code != 200 THEN 1 END) AS failed_requests\nFROM system.access.audit\nWHERE service_name = 'unityCatalog'\n  AND event_date >= CURRENT_DATE() - INTERVAL 30 DAY\n  AND user_identity.email IS NOT NULL\nGROUP BY user_identity.email\nORDER BY total_events DESC\nLIMIT 50",
       "parameters": []
+    },
+    {
+      "name": "ds_storage_summary",
+      "displayName": "storage_snapshot_summary",
+      "query": "WITH latest AS (\n  SELECT * FROM main.observability.table_storage_snapshot\n  WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM main.observability.table_storage_snapshot)\n)\nSELECT\n  COUNT(*) AS tables_scanned,\n  SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) AS tables_succeeded,\n  SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS tables_failed,\n  CONCAT(ROUND(SUM(total_bytes) / POW(1024, 4), 2), ' TB') AS total_storage,\n  CONCAT(ROUND(SUM(active_bytes) / POW(1024, 4), 2), ' TB') AS active_storage,\n  CONCAT(ROUND(SUM(vacuumable_bytes) / POW(1024, 3), 1), ' GB') AS vacuumable_storage,\n  CONCAT(ROUND(SUM(time_travel_bytes) / POW(1024, 3), 1), ' GB') AS time_travel_storage,\n  ROUND(SUM(vacuumable_bytes) * 100.0 / NULLIF(SUM(total_bytes), 0), 1) AS vacuumable_pct,\n  MAX(snapshot_date) AS snapshot_date\nFROM latest",
+      "parameters": []
+    },
+    {
+      "name": "ds_storage_by_catalog",
+      "displayName": "storage_by_catalog",
+      "query": "WITH latest AS (\n  SELECT * FROM main.observability.table_storage_snapshot\n  WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM main.observability.table_storage_snapshot)\n    AND error IS NULL\n)\nSELECT\n  table_catalog AS catalog,\n  ROUND(SUM(total_bytes) / POW(1024, 3), 1) AS total_gb,\n  ROUND(SUM(active_bytes) / POW(1024, 3), 1) AS active_gb,\n  ROUND(SUM(vacuumable_bytes) / POW(1024, 3), 1) AS vacuumable_gb,\n  ROUND(SUM(time_travel_bytes) / POW(1024, 3), 1) AS time_travel_gb,\n  COUNT(*) AS table_count\nFROM latest\nGROUP BY table_catalog\nORDER BY total_gb DESC",
+      "parameters": []
+    },
+    {
+      "name": "ds_storage_top_tables",
+      "displayName": "largest_tables",
+      "query": "WITH latest AS (\n  SELECT * FROM main.observability.table_storage_snapshot\n  WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM main.observability.table_storage_snapshot)\n    AND error IS NULL\n)\nSELECT\n  table_full_name,\n  table_catalog AS catalog,\n  ROUND(total_bytes / POW(1024, 3), 2) AS total_gb,\n  CASE\n    WHEN total_bytes >= POW(1024, 4) THEN CONCAT(ROUND(total_bytes / POW(1024, 4), 2), ' TB')\n    WHEN total_bytes >= POW(1024, 3) THEN CONCAT(ROUND(total_bytes / POW(1024, 3), 1), ' GB')\n    ELSE CONCAT(ROUND(total_bytes / POW(1024, 2), 0), ' MB')\n  END AS total_size,\n  CASE\n    WHEN active_bytes >= POW(1024, 4) THEN CONCAT(ROUND(active_bytes / POW(1024, 4), 2), ' TB')\n    WHEN active_bytes >= POW(1024, 3) THEN CONCAT(ROUND(active_bytes / POW(1024, 3), 1), ' GB')\n    ELSE CONCAT(ROUND(active_bytes / POW(1024, 2), 0), ' MB')\n  END AS active_size,\n  CASE\n    WHEN vacuumable_bytes >= POW(1024, 3) THEN CONCAT(ROUND(vacuumable_bytes / POW(1024, 3), 1), ' GB')\n    ELSE CONCAT(ROUND(vacuumable_bytes / POW(1024, 2), 0), ' MB')\n  END AS vacuumable_size,\n  ROUND(vacuumable_bytes * 100.0 / NULLIF(total_bytes, 0), 1) AS vacuumable_pct,\n  total_num_files\nFROM latest\nORDER BY total_bytes DESC\nLIMIT 50",
+      "parameters": []
+    },
+    {
+      "name": "ds_storage_waste",
+      "displayName": "storage_waste_by_catalog",
+      "query": "WITH latest AS (\n  SELECT * FROM main.observability.table_storage_snapshot\n  WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM main.observability.table_storage_snapshot)\n    AND error IS NULL\n)\nSELECT\n  table_catalog AS catalog,\n  ROUND(SUM(active_bytes) / POW(1024, 3), 1) AS active_gb,\n  ROUND(SUM(vacuumable_bytes) / POW(1024, 3), 1) AS vacuumable_gb,\n  ROUND(SUM(time_travel_bytes) / POW(1024, 3), 1) AS time_travel_gb\nFROM latest\nGROUP BY table_catalog\nORDER BY vacuumable_gb DESC",
+      "parameters": []
+    },
+    {
+      "name": "ds_storage_errors",
+      "displayName": "storage_scan_errors",
+      "query": "SELECT\n  table_full_name,\n  table_catalog AS catalog,\n  table_type,\n  data_source_format,\n  error\nFROM main.observability.table_storage_snapshot\nWHERE snapshot_date = (SELECT MAX(snapshot_date) FROM main.observability.table_storage_snapshot)\n  AND error IS NOT NULL\nORDER BY table_catalog, table_schema, table_name",
+      "parameters": []
     }
   ],
   "pages": [
@@ -5748,6 +5778,651 @@
             "y": 20,
             "width": 3,
             "height": 9
+          }
+        }
+      ]
+    },
+    {
+      "name": "pg_storage",
+      "displayName": "Table Storage",
+      "layout": [
+        {
+          "widget": {
+            "name": "w_storage_header",
+            "textbox_spec": "# Table storage\nPer-table storage metrics from `ANALYZE TABLE COMPUTE STORAGE METRICS`. Data sourced from the snapshot table `main.observability.table_storage_snapshot` - run the **UC Table Storage Snapshot** job to refresh.\n\nAll sizes shown in **TB / GB / MB** for readability. Vacuumable storage can be reclaimed by running `VACUUM`.",
+            "spec": {
+              "version": 1,
+              "widgetType": "textbox"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_cnt_total_storage",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_summary",
+                  "fields": [
+                    {
+                      "name": "total_storage",
+                      "expression": "`total_storage`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_storage",
+                  "displayName": "Total"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total Storage"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_cnt_active_storage",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_summary",
+                  "fields": [
+                    {
+                      "name": "active_storage",
+                      "expression": "`active_storage`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "active_storage",
+                  "displayName": "Active"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Active Storage"
+              }
+            }
+          },
+          "position": {
+            "x": 1,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_cnt_vacuumable",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_summary",
+                  "fields": [
+                    {
+                      "name": "vacuumable_storage",
+                      "expression": "`vacuumable_storage`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "vacuumable_storage",
+                  "displayName": "Reclaimable"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Vacuumable"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_cnt_time_travel",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_summary",
+                  "fields": [
+                    {
+                      "name": "time_travel_storage",
+                      "expression": "`time_travel_storage`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "time_travel_storage",
+                  "displayName": "Time Travel"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Time Travel"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_cnt_tables_scanned",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_summary",
+                  "fields": [
+                    {
+                      "name": "tables_scanned",
+                      "expression": "`tables_scanned`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "tables_scanned",
+                  "displayName": "Scanned"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables Scanned"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_cnt_scan_errors",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_summary",
+                  "fields": [
+                    {
+                      "name": "tables_failed",
+                      "expression": "`tables_failed`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "tables_failed",
+                  "displayName": "Errors"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Scan Errors"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_storage_by_catalog",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_by_catalog",
+                  "fields": [
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "total_gb",
+                      "expression": "`total_gb`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "total_gb",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Total (GB)"
+                },
+                "y": {
+                  "fieldName": "catalog",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "displayName": "Catalog"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Storage by Catalog (GB)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 3,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "w_storage_waste_stacked",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_waste",
+                  "fields": [
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "active_gb",
+                      "expression": "`active_gb`"
+                    },
+                    {
+                      "name": "vacuumable_gb",
+                      "expression": "`vacuumable_gb`"
+                    },
+                    {
+                      "name": "time_travel_gb",
+                      "expression": "`time_travel_gb`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "catalog",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Catalog",
+                    "displayName": "catalog"
+                  },
+                  {
+                    "fieldName": "active_gb",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Active (GB)",
+                    "displayName": "active_gb"
+                  },
+                  {
+                    "fieldName": "vacuumable_gb",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Vacuumable (GB)",
+                    "displayName": "vacuumable_gb"
+                  },
+                  {
+                    "fieldName": "time_travel_gb",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Time Travel (GB)",
+                    "displayName": "time_travel_gb"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Storage Breakdown by Catalog (GB)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 4,
+            "width": 3,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "w_top_tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_top_tables",
+                  "fields": [
+                    {
+                      "name": "table_full_name",
+                      "expression": "`table_full_name`"
+                    },
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "total_size",
+                      "expression": "`total_size`"
+                    },
+                    {
+                      "name": "active_size",
+                      "expression": "`active_size`"
+                    },
+                    {
+                      "name": "vacuumable_size",
+                      "expression": "`vacuumable_size`"
+                    },
+                    {
+                      "name": "vacuumable_pct",
+                      "expression": "`vacuumable_pct`"
+                    },
+                    {
+                      "name": "total_num_files",
+                      "expression": "`total_num_files`"
+                    },
+                    {
+                      "name": "total_gb",
+                      "expression": "`total_gb`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "table_full_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Table",
+                    "displayName": "table_full_name"
+                  },
+                  {
+                    "fieldName": "catalog",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Catalog",
+                    "displayName": "catalog"
+                  },
+                  {
+                    "fieldName": "total_size",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Total Size",
+                    "displayName": "total_size"
+                  },
+                  {
+                    "fieldName": "active_size",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Active",
+                    "displayName": "active_size"
+                  },
+                  {
+                    "fieldName": "vacuumable_size",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Vacuumable",
+                    "displayName": "vacuumable_size"
+                  },
+                  {
+                    "fieldName": "vacuumable_pct",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 5,
+                    "title": "Vacuum %",
+                    "displayName": "vacuumable_pct"
+                  },
+                  {
+                    "fieldName": "total_num_files",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 6,
+                    "title": "Files",
+                    "displayName": "total_num_files"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Largest Tables (top 50)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 6,
+            "height": 12
+          }
+        },
+        {
+          "widget": {
+            "name": "w_storage_errors",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_storage_errors",
+                  "fields": [
+                    {
+                      "name": "table_full_name",
+                      "expression": "`table_full_name`"
+                    },
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "table_type",
+                      "expression": "`table_type`"
+                    },
+                    {
+                      "name": "data_source_format",
+                      "expression": "`data_source_format`"
+                    },
+                    {
+                      "name": "error",
+                      "expression": "`error`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "table_full_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Table",
+                    "displayName": "table_full_name"
+                  },
+                  {
+                    "fieldName": "catalog",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Catalog",
+                    "displayName": "catalog"
+                  },
+                  {
+                    "fieldName": "table_type",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Type",
+                    "displayName": "table_type"
+                  },
+                  {
+                    "fieldName": "data_source_format",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Format",
+                    "displayName": "data_source_format"
+                  },
+                  {
+                    "fieldName": "error",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Error",
+                    "displayName": "error"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Scan Errors"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 24,
+            "width": 6,
+            "height": 8
           }
         }
       ]
