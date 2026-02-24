@@ -307,6 +307,26 @@
       "name": "ds_estate_orphaned_summary",
       "displayName": "estate_orphaned_summary",
       "query": "SELECT\n  COUNT(*) AS total_orphaned,\n  ROUND(100.0 * COUNT(*) /\n    (SELECT COUNT(*) FROM system.information_schema.tables WHERE table_schema != 'information_schema'), 1\n  ) AS orphaned_pct\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'\n  AND (table_owner IS NULL OR table_owner = '')"
+    },
+    {
+      "name": "ds_domain_distribution",
+      "displayName": "domain_distribution",
+      "query": "SELECT\n  domain,\n  COUNT(*) AS table_count\nFROM main.observability.table_domain_classifications\nGROUP BY domain\nORDER BY table_count DESC"
+    },
+    {
+      "name": "ds_domain_quality_heatmap",
+      "displayName": "domain_quality_heatmap",
+      "query": "SELECT\n  domain,\n  quality_tier,\n  COUNT(*) AS table_count\nFROM main.observability.table_domain_classifications\nGROUP BY domain, quality_tier\nORDER BY domain, quality_tier"
+    },
+    {
+      "name": "ds_domain_top_by_catalog",
+      "displayName": "domain_top_by_catalog",
+      "query": "SELECT\n  table_catalog AS catalog,\n  domain,\n  COUNT(*) AS table_count\nFROM main.observability.table_domain_classifications\nGROUP BY table_catalog, domain\nORDER BY table_count DESC\nLIMIT 100"
+    },
+    {
+      "name": "ds_domain_classification_detail",
+      "displayName": "domain_classification_detail",
+      "query": "SELECT\n  table_catalog,\n  table_schema,\n  table_name,\n  table_full_name,\n  table_type,\n  table_owner,\n  domain,\n  quality_tier,\n  classified_at\nFROM main.observability.table_domain_classifications\nORDER BY table_catalog, table_schema, table_name"
     }
   ],
   "pages": [
@@ -7078,6 +7098,357 @@
             "y": 24,
             "width": 3,
             "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_domain_header",
+            "textbox_spec": "## AI domain classification\nTables classified by **data domain** and **quality tier** using `ai_classify()`. Results are pre-computed weekly from table names. Source: `main.observability.table_domain_classifications`.",
+            "spec": {
+              "version": 1,
+              "widgetType": "textbox"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 32,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_domain_pie",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_domain_distribution",
+                  "fields": [
+                    {
+                      "name": "domain",
+                      "expression": "`domain`"
+                    },
+                    {
+                      "name": "table_count",
+                      "expression": "`table_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "table_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Tables"
+                },
+                "color": {
+                  "fieldName": "domain",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Domain"
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables by Domain"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 34,
+            "width": 3,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_domain_quality",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_domain_quality_heatmap",
+                  "fields": [
+                    {
+                      "name": "domain",
+                      "expression": "`domain`"
+                    },
+                    {
+                      "name": "quality_tier",
+                      "expression": "`quality_tier`"
+                    },
+                    {
+                      "name": "table_count",
+                      "expression": "`table_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "table_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Tables"
+                },
+                "y": {
+                  "fieldName": "domain",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "displayName": "Domain"
+                },
+                "color": {
+                  "fieldName": "quality_tier",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Quality Tier"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Domain x Quality Tier"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 34,
+            "width": 3,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_domain_by_catalog",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_domain_top_by_catalog",
+                  "fields": [
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "domain",
+                      "expression": "`domain`"
+                    },
+                    {
+                      "name": "table_count",
+                      "expression": "`table_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "table_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Tables"
+                },
+                "y": {
+                  "fieldName": "catalog",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "displayName": "Catalog"
+                },
+                "color": {
+                  "fieldName": "domain",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Domain"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Domain Distribution by Catalog"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 44,
+            "width": 3,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_domain_detail",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_domain_classification_detail",
+                  "fields": [
+                    {
+                      "name": "table_catalog",
+                      "expression": "`table_catalog`"
+                    },
+                    {
+                      "name": "table_schema",
+                      "expression": "`table_schema`"
+                    },
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "table_type",
+                      "expression": "`table_type`"
+                    },
+                    {
+                      "name": "table_owner",
+                      "expression": "`table_owner`"
+                    },
+                    {
+                      "name": "domain",
+                      "expression": "`domain`"
+                    },
+                    {
+                      "name": "quality_tier",
+                      "expression": "`quality_tier`"
+                    },
+                    {
+                      "name": "classified_at",
+                      "expression": "`classified_at`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "table_catalog",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Catalog",
+                    "displayName": "table_catalog"
+                  },
+                  {
+                    "fieldName": "table_schema",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Schema",
+                    "displayName": "table_schema"
+                  },
+                  {
+                    "fieldName": "table_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Table",
+                    "displayName": "table_name"
+                  },
+                  {
+                    "fieldName": "table_type",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Type",
+                    "displayName": "table_type"
+                  },
+                  {
+                    "fieldName": "table_owner",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Owner",
+                    "displayName": "table_owner"
+                  },
+                  {
+                    "fieldName": "domain",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 5,
+                    "title": "Domain",
+                    "displayName": "domain"
+                  },
+                  {
+                    "fieldName": "quality_tier",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 6,
+                    "title": "Quality Tier",
+                    "displayName": "quality_tier"
+                  },
+                  {
+                    "fieldName": "classified_at",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 7,
+                    "title": "Classified At",
+                    "displayName": "classified_at"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Classification Detail"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 44,
+            "width": 3,
+            "height": 10
           }
         }
       ]

@@ -1,0 +1,21 @@
+resources:
+  jobs:
+    table_domain_classifier:
+      name: "[${bundle.target}] UC Table Domain Classifier"
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: classify_tables
+          notebook_task:
+            notebook_path: ../src/classify_tables.py
+            source: WORKSPACE
+            base_parameters:
+              target_table: ${var.target_table}
+              catalog_filter: ${var.catalog_filter}
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"

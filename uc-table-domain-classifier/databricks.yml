@@ -1,0 +1,21 @@
+bundle:
+  name: uc-table-domain-classifier
+
+variables:
+  target_table:
+    description: Three-level name of the classifications table to write results to
+    default: main.observability.table_domain_classifications
+  catalog_filter:
+    description: >
+      Comma-separated list of catalogs to classify. Leave empty to classify all visible catalogs.
+    default: ""
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production
