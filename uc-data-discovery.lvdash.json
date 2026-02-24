@@ -267,6 +267,46 @@
       "displayName": "storage_scan_errors",
       "query": "SELECT\n  table_full_name,\n  table_catalog AS catalog,\n  table_type,\n  data_source_format,\n  error\nFROM main.observability.table_storage_snapshot\nWHERE snapshot_date = (SELECT MAX(snapshot_date) FROM main.observability.table_storage_snapshot)\n  AND error IS NOT NULL\nORDER BY table_catalog, table_schema, table_name",
       "parameters": []
+    },
+    {
+      "name": "ds_estate_true_counts",
+      "displayName": "estate_true_counts",
+      "query": "SELECT\n  COUNT(DISTINCT table_catalog) AS total_catalogs,\n  COUNT(DISTINCT CONCAT(table_catalog, '.', table_schema)) AS total_schemas,\n  COUNT(*) AS total_tables,\n  COUNT(CASE WHEN table_type IN ('MANAGED', 'EXTERNAL') THEN 1 END) AS physical_tables,\n  COUNT(CASE WHEN table_type = 'VIEW' THEN 1 END) AS views,\n  COUNT(CASE WHEN table_type = 'STREAMING_TABLE' THEN 1 END) AS streaming_tables,\n  COUNT(CASE WHEN table_type = 'MATERIALIZED_VIEW' THEN 1 END) AS materialized_views\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'"
+    },
+    {
+      "name": "ds_estate_lineage_coverage",
+      "displayName": "estate_lineage_coverage",
+      "query": "WITH lineage_tables AS (\n  SELECT DISTINCT COALESCE(source_table_full_name, target_table_full_name) AS table_full_name\n  FROM system.access.table_lineage\n  WHERE event_date >= CURRENT_DATE() - INTERVAL 90 DAY\n    AND COALESCE(source_table_full_name, target_table_full_name) IS NOT NULL\n),\nall_tables AS (\n  SELECT CONCAT(table_catalog, '.', table_schema, '.', table_name) AS table_full_name\n  FROM system.information_schema.tables\n  WHERE table_schema != 'information_schema'\n)\nSELECT\n  COUNT(*) AS total_tables,\n  COUNT(lt.table_full_name) AS active_tables,\n  COUNT(*) - COUNT(lt.table_full_name) AS dormant_tables,\n  ROUND(100.0 * COUNT(lt.table_full_name) / COUNT(*), 1) AS active_pct,\n  ROUND(100.0 * (COUNT(*) - COUNT(lt.table_full_name)) / COUNT(*), 1) AS dormant_pct\nFROM all_tables at\nLEFT JOIN lineage_tables lt ON at.table_full_name = lt.table_full_name"
+    },
+    {
+      "name": "ds_estate_active_dormant_pie",
+      "displayName": "estate_active_dormant_pie",
+      "query": "WITH lineage_tables AS (\n  SELECT DISTINCT COALESCE(source_table_full_name, target_table_full_name) AS table_full_name\n  FROM system.access.table_lineage\n  WHERE event_date >= CURRENT_DATE() - INTERVAL 90 DAY\n    AND COALESCE(source_table_full_name, target_table_full_name) IS NOT NULL\n),\nall_tables AS (\n  SELECT CONCAT(table_catalog, '.', table_schema, '.', table_name) AS table_full_name\n  FROM system.information_schema.tables\n  WHERE table_schema != 'information_schema'\n)\nSELECT\n  CASE WHEN lt.table_full_name IS NOT NULL THEN 'Active (90d)' ELSE 'Dormant' END AS status,\n  COUNT(*) AS table_count\nFROM all_tables at\nLEFT JOIN lineage_tables lt ON at.table_full_name = lt.table_full_name\nGROUP BY ALL"
+    },
+    {
+      "name": "ds_estate_top_schemas",
+      "displayName": "estate_top_schemas",
+      "query": "SELECT\n  table_catalog AS catalog,\n  table_schema AS schema_name,\n  CONCAT(table_catalog, '.', table_schema) AS full_schema_name,\n  COUNT(*) AS table_count\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'\nGROUP BY table_catalog, table_schema\nORDER BY table_count DESC\nLIMIT 30"
+    },
+    {
+      "name": "ds_estate_most_written",
+      "displayName": "estate_most_written",
+      "query": "SELECT\n  target_table_full_name AS table_name,\n  target_table_catalog AS catalog,\n  COUNT(DISTINCT event_time) AS write_count,\n  COUNT(DISTINCT created_by) AS unique_writers,\n  COUNT(DISTINCT workspace_id) AS workspace_count,\n  MAX(event_date) AS last_write\nFROM system.access.table_lineage\nWHERE target_table_full_name IS NOT NULL\n  AND event_date >= CURRENT_DATE() - INTERVAL 90 DAY\nGROUP BY ALL\nORDER BY write_count DESC\nLIMIT 50"
+    },
+    {
+      "name": "ds_estate_never_accessed",
+      "displayName": "estate_never_accessed",
+      "query": "WITH lineage_tables AS (\n  SELECT DISTINCT COALESCE(source_table_full_name, target_table_full_name) AS table_full_name\n  FROM system.access.table_lineage\n  WHERE COALESCE(source_table_full_name, target_table_full_name) IS NOT NULL\n)\nSELECT\n  t.table_catalog AS catalog,\n  t.table_schema AS schema_name,\n  COUNT(*) AS never_accessed_count,\n  MIN(t.created) AS oldest_table,\n  MAX(t.created) AS newest_table\nFROM system.information_schema.tables t\nLEFT JOIN lineage_tables lt\n  ON CONCAT(t.table_catalog, '.', t.table_schema, '.', t.table_name) = lt.table_full_name\nWHERE t.table_schema != 'information_schema'\n  AND lt.table_full_name IS NULL\nGROUP BY t.table_catalog, t.table_schema\nORDER BY never_accessed_count DESC\nLIMIT 50"
+    },
+    {
+      "name": "ds_estate_orphaned",
+      "displayName": "estate_orphaned",
+      "query": "SELECT\n  table_catalog AS catalog,\n  COUNT(*) AS orphaned_count\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'\n  AND (table_owner IS NULL OR table_owner = '')\nGROUP BY table_catalog\nORDER BY orphaned_count DESC"
+    },
+    {
+      "name": "ds_estate_orphaned_summary",
+      "displayName": "estate_orphaned_summary",
+      "query": "SELECT\n  COUNT(*) AS total_orphaned,\n  ROUND(100.0 * COUNT(*) /\n    (SELECT COUNT(*) FROM system.information_schema.tables WHERE table_schema != 'information_schema'), 1\n  ) AS orphaned_pct\nFROM system.information_schema.tables\nWHERE table_schema != 'information_schema'\n  AND (table_owner IS NULL OR table_owner = '')"
     }
   ],
   "pages": [
@@ -6422,6 +6462,621 @@
             "x": 0,
             "y": 24,
             "width": 6,
+            "height": 8
+          }
+        }
+      ]
+    },
+    {
+      "name": "pg_estate",
+      "displayName": "Data Estate Inventory",
+      "layout": [
+        {
+          "widget": {
+            "name": "w_estate_header",
+            "textbox_spec": "# Data estate inventory\nTrue object counts from `system.information_schema.tables` - not limited to lineage events. Shows **all** registered tables, views, and streaming tables across every catalog. Active/dormant classification uses a 90-day lineage window. \"Never accessed\" means zero lineage events across full retention.",
+            "spec": {
+              "version": 1,
+              "widgetType": "textbox"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_cnt_catalogs",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_true_counts",
+                  "fields": [
+                    {
+                      "name": "total_catalogs",
+                      "expression": "`total_catalogs`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_catalogs",
+                  "displayName": "Catalogs"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Catalogs"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_cnt_schemas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_true_counts",
+                  "fields": [
+                    {
+                      "name": "total_schemas",
+                      "expression": "`total_schemas`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_schemas",
+                  "displayName": "Schemas"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Schemas"
+              }
+            }
+          },
+          "position": {
+            "x": 1,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_cnt_tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_true_counts",
+                  "fields": [
+                    {
+                      "name": "total_tables",
+                      "expression": "`total_tables`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_tables",
+                  "displayName": "Objects"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total Objects"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_cnt_physical",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_true_counts",
+                  "fields": [
+                    {
+                      "name": "physical_tables",
+                      "expression": "`physical_tables`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "physical_tables",
+                  "displayName": "Physical"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Physical Tables"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_cnt_active_pct",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_lineage_coverage",
+                  "fields": [
+                    {
+                      "name": "active_pct",
+                      "expression": "`active_pct`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "active_pct",
+                  "displayName": "Active %"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Active (90d) %"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_cnt_orphaned",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_orphaned_summary",
+                  "fields": [
+                    {
+                      "name": "total_orphaned",
+                      "expression": "`total_orphaned`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_orphaned",
+                  "displayName": "Unowned"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Unowned Tables"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_top_schemas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_top_schemas",
+                  "fields": [
+                    {
+                      "name": "full_schema_name",
+                      "expression": "`full_schema_name`"
+                    },
+                    {
+                      "name": "table_count",
+                      "expression": "`table_count`"
+                    },
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "table_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Table Count"
+                },
+                "y": {
+                  "fieldName": "full_schema_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "displayName": "Schema"
+                },
+                "color": {
+                  "fieldName": "catalog",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Catalog"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Top 30 Schemas by Table Count"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 3,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_active_dormant",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_active_dormant_pie",
+                  "fields": [
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "table_count",
+                      "expression": "`table_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "table_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Tables"
+                },
+                "color": {
+                  "fieldName": "status",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Status"
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Active vs Dormant (90d lineage window)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 4,
+            "width": 3,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_most_written",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_most_written",
+                  "fields": [
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "write_count",
+                      "expression": "`write_count`"
+                    },
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "write_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Write Count"
+                },
+                "y": {
+                  "fieldName": "table_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "displayName": "Table"
+                },
+                "color": {
+                  "fieldName": "catalog",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Catalog"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Most Written Tables (90d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 3,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_never_accessed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_never_accessed",
+                  "fields": [
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    },
+                    {
+                      "name": "never_accessed_count",
+                      "expression": "`never_accessed_count`"
+                    },
+                    {
+                      "name": "oldest_table",
+                      "expression": "`oldest_table`"
+                    },
+                    {
+                      "name": "newest_table",
+                      "expression": "`newest_table`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "catalog",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Catalog",
+                    "displayName": "catalog"
+                  },
+                  {
+                    "fieldName": "schema_name",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "Schema",
+                    "displayName": "schema_name"
+                  },
+                  {
+                    "fieldName": "never_accessed_count",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Never Accessed",
+                    "displayName": "never_accessed_count"
+                  },
+                  {
+                    "fieldName": "oldest_table",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 3,
+                    "title": "Oldest Table",
+                    "displayName": "oldest_table"
+                  },
+                  {
+                    "fieldName": "newest_table",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 4,
+                    "title": "Newest Table",
+                    "displayName": "newest_table"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "condensed": true,
+              "withRowNumber": false,
+              "itemsPerPage": 25,
+              "frame": {
+                "showTitle": true,
+                "title": "Never Accessed Tables by Schema (full history)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 14,
+            "width": 3,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "w_estate_orphaned_by_catalog",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estate_orphaned",
+                  "fields": [
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    },
+                    {
+                      "name": "orphaned_count",
+                      "expression": "`orphaned_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "orphaned_count",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Unowned Tables"
+                },
+                "y": {
+                  "fieldName": "catalog",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "displayName": "Catalog"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Unowned Tables by Catalog"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 24,
+            "width": 3,
             "height": 8
           }
         }
